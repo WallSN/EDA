@@ -10,26 +10,46 @@ const prisma = new PrismaClient();
 export async function startFetcherWorker(requestId: string) {
   console.log(`[Fetcher] Iniciando ID: ${requestId}`);
   
-  // Atualiza Status
-  await prisma.request.update({ where: { id: requestId }, data: { status: 'fetching' } });
+  try {
+    // Atualiza Status
+    await prisma.request.update({ where: { id: requestId }, data: { status: 'fetching' } });
 
-  // Cria diretório
-  const dir = path.join(__dirname, `../../storage/${requestId}`);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    // Simulador de erros - 30% de chance de falha
+    if (Math.random() < 0.3) {
+      throw new Error('Falha simulada da API externa de imagens (30% de probabilidade)');
+    }
 
-  // 1. Gera Texto
-  const textContent = faker.lorem.paragraphs(3);
-  fs.writeFileSync(path.join(dir, 'content.txt'), textContent);
+    // Cria diretório
+    const dir = path.join(__dirname, `../../storage/${requestId}`);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  // 2. Baixa 10 Imagens
-  for (let i = 0; i < 10; i++) {
-    const response = await axios.get('https://picsum.photos/200', { responseType: 'arraybuffer' });
-    fs.writeFileSync(path.join(dir, `image_${i}.jpg`), response.data);
+    // 1. Gera Texto
+    const textContent = faker.lorem.paragraphs(3);
+    fs.writeFileSync(path.join(dir, 'content.txt'), textContent);
+
+    // 2. Baixa 10 Imagens
+    for (let i = 0; i < 10; i++) {
+      const response = await axios.get('https://picsum.photos/200', { responseType: 'arraybuffer' });
+      fs.writeFileSync(path.join(dir, `image_${i}.jpg`), response.data);
+    }
+
+    console.log(`[Fetcher] Finalizado. Publicando para gen_pdf.`);
+    
+    // Muda status para próximo passo e avisa
+    await prisma.request.update({ where: { id: requestId }, data: { status: 'gen_pdf' } });
+    await publisher.publish('process:gen_pdf', requestId);
+
+  } catch (error) {
+  // Tratamento de erro
+    console.error(`[Fetcher] ERRO ao processar ID ${requestId}:`, error instanceof Error ? error.message : error);
+    
+    // Atualiza status do pedido para 'failed'
+    await prisma.request.update({ 
+      where: { id: requestId }, 
+      data: { status: 'failed' } 
+    });
+    
+    // Publica o ID no canal de falhas (DLQ)
+    await publisher.publish('process:failed', requestId);
   }
-
-  console.log(`[Fetcher] Finalizado. Publicando para gen_pdf.`);
-  
-  // Muda status para próximo passo e avisa
-  await prisma.request.update({ where: { id: requestId }, data: { status: 'gen_pdf' } });
-  await publisher.publish('process:gen_pdf', requestId);
 }
