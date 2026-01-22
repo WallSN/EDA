@@ -1,2 +1,4 @@
 node_modules
 storage/*
+prisma/*.db
+prisma/*.db-journal
